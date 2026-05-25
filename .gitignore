@@ -1,0 +1,98 @@
+# =============================================================================
+# Secrets — NEVER commit
+# =============================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+env/
+
+# Test / coverage / mypy / ruff caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Celery beat schedule file
+celerybeat-schedule
+celerybeat.pid
+
+# Alembic — keep versions, ignore local SQLite if any
+*.sqlite3
+*.db
+
+# =============================================================================
+# Node / React
+# =============================================================================
+node_modules/
+.pnp
+.pnp.js
+build/
+dist/
+coverage/
+.npm
+.eslintcache
+.parcel-cache/
+.next/
+.nuxt/
+
+# =============================================================================
+# Docker
+# =============================================================================
+docker-compose.local.yml
+docker-compose.*.local.yml
+
+# =============================================================================
+# IDE / OS
+# =============================================================================
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# =============================================================================
+# Logs
+# =============================================================================
+*.log
+logs/
