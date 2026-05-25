@@ -23,6 +23,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pythonjsonlogger import jsonlogger
 
+from app.api import otp as otp_router
+
 
 # =============================================================================
 # Logging setup
@@ -118,6 +120,9 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         """Liveness probe — used by Docker healthcheck, k8s, monitoring."""
         return {"status": "ok", "version": app.version}
+
+    # --- Routers ------------------------------------------------------------
+    app.include_router(otp_router.router)
 
     return app
 
