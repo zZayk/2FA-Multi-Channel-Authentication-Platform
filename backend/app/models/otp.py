@@ -75,7 +75,7 @@ class OTP(Base):
     code_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     channel: Mapped[OTPChannel] = mapped_column(
-        Enum(OTPChannel, name="otp_channel"),
+        Enum(OTPChannel, name="otp_channel", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
     )
 
@@ -84,7 +84,7 @@ class OTP(Base):
     recipient: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
 
     status: Mapped[OTPStatus] = mapped_column(
-        Enum(OTPStatus, name="otp_status"),
+        Enum(OTPStatus, name="otp_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=OTPStatus.PENDING,
     )
