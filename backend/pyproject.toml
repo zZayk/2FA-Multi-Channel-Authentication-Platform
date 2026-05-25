@@ -1,0 +1,41 @@
+# =============================================================================
+# Backend tooling config — single source of truth for ruff + pytest.
+# CI runs from this directory:
+#   ruff check app tests
+#   pytest -q
+# =============================================================================
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# E,F = pyflakes + pycodestyle errors. I = isort. B = bugbear. UP = pyupgrade.
+# Keep the set small for now; add as the codebase matures.
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    "E501",   # line length — ruff format owns this
+    "B008",   # function call in default arg — FastAPI Depends() pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]  # asserts allowed in tests
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# -----------------------------------------------------------------------------
+# Pytest
+# -----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+pythonpath = ["."]              # so `from app...` resolves
+asyncio_mode = "auto"           # don't need @pytest.mark.asyncio on every test
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:passlib.*",
+]
