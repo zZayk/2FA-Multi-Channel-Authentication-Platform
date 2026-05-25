@@ -1,0 +1,33 @@
+# =============================================================================
+# Dev-only overrides — auto-merged with docker-compose.yml during `docker compose up`.
+# Adds: source bind-mounts, hot reload, debug ports.
+# =============================================================================
+
+services:
+
+  api:
+    # Bind-mount source for hot reload (uvicorn --reload watches the FS).
+    volumes:
+      - ./backend/app:/app/app
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+
+  worker:
+    volumes:
+      - ./backend/app:/app/app
+    # No --reload for Celery; restart container after code changes,
+    # or use `watchmedo auto-restart` if rapid worker iteration becomes painful.
+
+  beat:
+    volumes:
+      - ./backend/app:/app/app
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules   # anonymous volume preserves container's node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true   # required for hot reload on Windows/WSL bind mounts

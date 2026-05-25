@@ -1,0 +1,125 @@
+# =============================================================================
+# 2FA Multi-Channel Authentication Platform — base Compose file
+# -----------------------------------------------------------------------------
+# This is the "production-shaped" definition: image build, networks, healthchecks.
+# Dev-only ergonomics (hot reload, source bind-mounts, debug ports) live in
+# docker-compose.override.yml — Compose auto-merges both for `docker compose up`.
+#
+# [LEARN] Why split base + override?
+#   Pattern: "Compose file layering" — base = what every env shares,
+#   override = what dev/staging/prod each need extra.
+#   Read more: https://docs.docker.com/compose/multiple-compose-files/extends/
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # api — FastAPI HTTP service (port 8000)
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: 2fa-platform-backend:dev
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    networks:
+      - 2fa-net
+
+  # ---------------------------------------------------------------------------
+  # worker — Celery worker (executes async jobs: send SMS, send Email, DLR poll)
+  # ---------------------------------------------------------------------------
+  worker:
+    image: 2fa-platform-backend:dev
+    command: celery -A app.tasks.celery_app worker --loglevel=INFO
+    env_file:
+      - .env
+    depends_on:
+      - api
+      - redis
+    networks:
+      - 2fa-net
+
+  # ---------------------------------------------------------------------------
+  # beat — Celery Beat scheduler (cron-like)
+  # ---------------------------------------------------------------------------
+  # [LEARN] Why Beat is its own container:
+  #   Beat = scheduler. It enqueues periodic tasks (e.g. "poll TunisiaSMS DLR
+  #   every 30s"). Worker = executor. Workers pull tasks from the broker.
+  #   If Beat ran inside Worker, scaling Worker to N replicas would create
+  #   N schedulers → N copies of every periodic task → duplicate side effects
+  #   (duplicate SMS sends, duplicate DLR polls). Always exactly ONE Beat.
+  #   Read more: Celery docs — "Periodic Tasks".
+  beat:
+    image: 2fa-platform-backend:dev
+    command: celery -A app.tasks.celery_app beat --loglevel=INFO
+    env_file:
+      - .env
+    depends_on:
+      - api
+      - redis
+    networks:
+      - 2fa-net
+
+  # ---------------------------------------------------------------------------
+  # db — PostgreSQL 15
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-app}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - 2fa-net
+
+  # ---------------------------------------------------------------------------
+  # redis — Redis 7 (OTP cache + Celery broker + rate-limit store)
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - 2fa-net
+
+  # ---------------------------------------------------------------------------
+  # frontend — React dev server (port 3000)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: 2fa-platform-frontend:dev
+    ports:
+      - "3000:3000"
+    networks:
+      - 2fa-net
+
+volumes:
+  db-data:
+
+networks:
+  2fa-net:
+    driver: bridge
