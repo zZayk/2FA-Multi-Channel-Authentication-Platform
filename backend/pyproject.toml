@@ -35,6 +35,9 @@ addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["."]              # so `from app...` resolves
 asyncio_mode = "auto"           # don't need @pytest.mark.asyncio on every test
+markers = [
+    "integration: spins up real services (Postgres via testcontainers). Opt-in with --run-integration.",
+]
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:passlib.*",
