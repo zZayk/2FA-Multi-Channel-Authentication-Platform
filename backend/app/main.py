@@ -24,6 +24,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from pythonjsonlogger import jsonlogger
 
 from app.api import otp as otp_router
+from app.core.config import get_settings
+
+
+# Tag metadata — renders as grouped sections + descriptions in Swagger UI.
+_OPENAPI_TAGS = [
+    {"name": "meta", "description": "Liveness / readiness probes. No auth."},
+    {
+        "name": "otp",
+        "description": (
+            "Issue and verify one-time passwords across SMS and Email. "
+            "All endpoints require a valid `X-API-Key` header."
+        ),
+    },
+]
+
+_API_DESCRIPTION = """
+Production-grade 2FA platform — multi-channel OTP delivery (SMS + Email)
+with delivery tracking, auto-fallback, and an anti-abuse engine.
+
+### Authentication
+All `/otp/*` endpoints require an API key sent as the `X-API-Key` header.
+Click **Authorize** and paste a key (`l2t_...`) to try the endpoints below.
+""".strip()
 
 
 # =============================================================================
@@ -100,10 +123,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     """Build the FastAPI app. Kept as a function so tests can spin up fresh instances."""
+    settings = get_settings()
+
+    # [LEARN] Hide interactive docs outside dev.
+    # Swagger/ReDoc enumerate every endpoint + schema — useful in dev, but in
+    # prod they widen the attack surface (and leak internal shape to scanners).
+    # Setting the URLs to None disables the routes entirely.
+    docs_enabled = settings.ENVIRONMENT == "dev"
+
     app = FastAPI(
-        title="2FA Multi-Channel Authentication Platform",
-        version="0.1.0",
+        title=settings.APP_NAME,
+        version=settings.APP_VERSION,
+        description=_API_DESCRIPTION,
+        openapi_tags=_OPENAPI_TAGS,
         lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+        contact={"name": "L2T Tunisie", "email": "dev@l2t.tn"},
     )
 
     # [LEARN] CORS in dev: permissive so the React dev server on :3000 can call :8000.

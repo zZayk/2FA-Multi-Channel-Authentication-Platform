@@ -31,7 +31,8 @@ from app.core.database import Base        # noqa: E402
 
 # Register all models on Base.metadata by importing the package.
 # Add new model modules to app/models/__init__.py for autodiscovery.
-import app.models.otp  # noqa: F401,E402  (side-effect import)
+import app.models.otp      # noqa: F401,E402  (side-effect import)
+import app.models.api_key  # noqa: F401,E402  (side-effect import)
 
 # --- Standard Alembic setup --------------------------------------------------
 config = context.config
@@ -39,8 +40,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Inject the URL from Settings (single source of truth).
-config.set_main_option("sqlalchemy.url", get_settings().DATABASE_URL)
+# Inject the URL from Settings (single source of truth) UNLESS one was already
+# provided on the config (e.g. a test pointing Alembic at an ephemeral DB, or
+# ops passing `-x` / editing alembic.ini). Explicit wins over Settings.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", get_settings().DATABASE_URL)
 
 target_metadata = Base.metadata
 
