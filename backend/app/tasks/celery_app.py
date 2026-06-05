@@ -30,6 +30,14 @@ celery_app = Celery(
     "app",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
+    # Explicit task modules. `autodiscover_tasks` looks for `tasks.py` inside
+    # each given package by default — our modules are named `dispatch.py` /
+    # `dlr.py`, so we list them here. Keep this list in sync as new task
+    # modules land.
+    include=[
+        "app.tasks.dispatch",
+        "app.tasks.dlr",
+    ],
 )
 
 # -----------------------------------------------------------------------------
@@ -63,9 +71,4 @@ celery_app.conf.update(
 #   },
 celery_app.conf.beat_schedule = {}
 
-# -----------------------------------------------------------------------------
-# Task autodiscovery
-# -----------------------------------------------------------------------------
-# Picks up every module matching `app.tasks.*` that defines @celery_app.task.
-# Add new task modules to app/tasks/ — no manual registration needed.
-celery_app.autodiscover_tasks(packages=["app.tasks"])
+# Task modules are listed via `include=[...]` above; nothing else needed here.
