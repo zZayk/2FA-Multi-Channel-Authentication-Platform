@@ -114,7 +114,7 @@ async def create_otp(
     leaves this function alive in any persistent form.
 
     [NEW CONCEPT] "Pre-token / out-of-band delivery code". The plaintext is
-    handed back exactly once; thereafter only its bcrypt hash exists.
+    handed back exactly once; thereafter only its HMAC-SHA256 hash exists.
     """
     settings = get_settings()
     code = generate_code(settings.OTP_CODE_LENGTH)

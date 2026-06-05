@@ -45,9 +45,6 @@ class Settings(BaseSettings):
     # `print(settings.SECRET_KEY)` shows "**********", not the value.
     # To use the real value: `settings.SECRET_KEY.get_secret_value()`.
     SECRET_KEY: SecretStr = Field(..., description="App-wide signing/HMAC key")
-    # bcrypt cost factor: 12 in prod is OWASP-recommended (~250ms on modern CPU).
-    # Tests override to 4 via env var → ~1ms — keeps pytest snappy.
-    BCRYPT_ROUNDS: int = Field(default=12, ge=4, le=15)
 
     # -------------------------------------------------------------------------
     # Database (async SQLAlchemy + asyncpg)

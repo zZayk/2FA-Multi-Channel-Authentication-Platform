@@ -9,9 +9,10 @@ consumption. This shape lets the abuse engine analyse patterns later
 (e.g. "5 OTPs created in 10s to the same recipient").
 
 Key security points (DO NOT regress on these):
-  • code_hash is bcrypt of the OTP — NEVER store the plaintext code.
-    A DB dump must be useless. The service layer hashes on create and
-    compares on verify (`bcrypt.checkpw`).
+  • code_hash is HMAC-SHA256 of the OTP, keyed with SECRET_KEY —
+    NEVER store the plaintext code. A DB dump alone is useless to an
+    attacker (they still need SECRET_KEY to forge a hash). The service
+    layer hashes on create and constant-time-compares on verify.
   • expires_at + used_at + attempt_count together enforce TTL,
     single-use, and max-retries — all checked in services/otp_service.py.
   • correlation_id is a UUID that travels with the auth attempt
@@ -71,7 +72,7 @@ class OTP(Base):
         default=uuid.uuid4,
     )
 
-    # Hashed OTP — NEVER store the plaintext value.
+    # Hashed OTP (HMAC-SHA256 hex, 64 chars) — NEVER store the plaintext value.
     code_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     channel: Mapped[OTPChannel] = mapped_column(
