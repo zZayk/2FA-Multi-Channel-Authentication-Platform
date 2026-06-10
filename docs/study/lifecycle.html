@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Request Lifecycle · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">🔄 Request Lifecycle</h1>
+    <p class="lead"><code>POST /otp/request</code> — follow one OTP from HTTP call to delivered message. Click the steps.</p>
+
+    <div class="stepper" id="reqsteps"></div>
+    <div class="stepbox" id="reqbox"></div>
+    <div class="stepnav">
+      <button id="prevStep">← Prev</button>
+      <button id="nextStep">Next →</button>
+    </div>
+
+    <h2>The full sequence</h2>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant A as FastAPI
+    participant Sec as require_api_key
+    participant Svc as otp_service
+    participant DB as Postgres
+    participant R as Redis
+    participant W as Worker
+    participant Ad as Adapter
+    C->>A: POST /otp/request + X-API-Key
+    A->>Sec: resolve dependency
+    Sec->>DB: lookup key by hash, not revoked
+    DB-->>Sec: key row or none then 401
+    A->>Svc: create_otp(channel, recipient)
+    Svc->>Svc: code = randbelow, hash = HMAC(code)
+    Svc->>DB: INSERT otp PENDING, expires_at
+    Svc-->>A: (otp_row, plaintext_code)
+    A->>R: dispatch_otp.delay(otp_id, code)
+    A-->>C: 201 status pending (no code)
+    Note over W: moments later, async
+    W->>R: pull job
+    W->>DB: load OTP, skip if not PENDING
+    W->>W: render_otp(channel, code)
+    W->>Ad: send(recipient, body)
+    Ad-->>W: SendResult ACCEPTED / RETRY / REJECTED
+    W->>DB: UPDATE status SENT or FAILED
+    </div>
+    <div class="diagram-fallback"></div>
+
+    <div class="warn"><b>Notice step 11:</b> the API returns <code>201</code> <em>before</em> the SMS is sent, and the response never contains the code. The code leaves the system only through the chosen channel — that's the whole point of 2FA.</div>
+
+    <h2>Concrete demo</h2>
+    <p class="tablabel">REQUEST</p>
+    <pre><code>POST /otp/request
+X-API-Key: l2t_3vK9...redacted
+Content-Type: application/json
+
+{ "channel": "sms", "recipient": "+21620000000" }</code></pre>
+    <p class="tablabel">RESPONSE · 201</p>
+    <pre><code>{
+  "id": "7c3a1e2b-9f44-4c10-bd2e-1a6f0b9e5d77",
+  "channel": "sms",
+  "status": "pending",
+  "expires_at": "2026-06-05T12:35:00Z",
+  "correlation_id": "b81d2f6a-0e3c-4a9d-9f1e-2c7b4a8e6d31"
+}</code></pre>
+    <p class="tablabel">WORKER LOG (JSON, one line — pretty-printed here)</p>
+    <pre><code>{
+  "timestamp": "2026-06-05T12:30:01Z",
+  "level": "INFO",
+  "message": "dispatch.sent",
+  "otp_id": "7c3a1e2b-9f44-4c10-bd2e-1a6f0b9e5d77",
+  "channel": "sms",
+  "provider_message_id": "tsms-99213",
+  "correlation_id": "b81d2f6a-0e3c-4a9d-9f1e-2c7b4a8e6d31"
+}</code></pre>
+    <div class="note">Same <code>correlation_id</code> in the API response and the worker log — that's how you trace one request across two processes.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+
+<script>
+  const steps = [
+    {t:"1 · HTTP arrives", f:"api/otp.py", d:"Client POSTs channel + recipient with an X-API-Key header. FastAPI validates the body against OTPRequest (E.164 phone for SMS, email for EMAIL)."},
+    {t:"2 · Auth check", f:"core/security.py", d:"require_api_key hashes the key and looks it up by indexed key_hash where revoked_at IS NULL. Miss → 401 before anything else runs."},
+    {t:"3 · Create OTP", f:"services/otp_service.py", d:"Generate a CSPRNG 6-digit code, HMAC-hash it, INSERT a PENDING row with expires_at = now + TTL. Returns (row, plaintext)."},
+    {t:"4 · Enqueue job", f:"api/otp.py", d:"dispatch_otp.delay(otp_id, code) drops a JSON message on Redis. The API does NOT wait for the send."},
+    {t:"5 · Respond 201", f:"api/otp.py", d:"Client gets {id, status: pending}. The plaintext code is never in the HTTP response."},
+    {t:"6 · Worker pulls", f:"tasks/dispatch.py", d:"A Celery worker picks the job off Redis. Loads the OTP; if it is no longer PENDING it skips (idempotency)."},
+    {t:"7 · Render", f:"services/templates.py", d:"Jinja2 renders the channel-specific message (SMS body, or Email subject + body) with the code and TTL minutes."},
+    {t:"8 · Send", f:"services/channels/*", d:"get_adapter(channel).send(...) calls TunisiaSMS (httpx) or SMTP (aiosmtplib). Returns SendResult: ACCEPTED / RETRY / REJECTED."},
+    {t:"9 · Update status", f:"tasks/dispatch.py", d:"ACCEPTED → SENT. REJECTED/permanent → FAILED. RETRY → raise TransientChannelError → Celery retries with backoff + jitter."},
+  ];
+  let cur = 0;
+  const stepper = document.getElementById("reqsteps");
+  const box = document.getElementById("reqbox");
+  const prev = document.getElementById("prevStep");
+  const next = document.getElementById("nextStep");
+  function render(i){
+    cur = i;
+    box.innerHTML = `<h4>${steps[i].t}</h4><div class="file">📄 backend/app/${steps[i].f}</div><p>${steps[i].d}</p>`;
+    [...stepper.children].forEach((b,j)=>b.classList.toggle("active", j===i));
+    prev.disabled = i===0; next.disabled = i===steps.length-1;
+  }
+  steps.forEach((s,i)=>{ const b=document.createElement("button"); b.className="stepbtn"; b.textContent=i+1; b.onclick=()=>render(i); stepper.appendChild(b); });
+  prev.onclick=()=>render(Math.max(0,cur-1));
+  next.onclick=()=>render(Math.min(steps.length-1,cur+1));
+  render(0);
+</script>
+</body>
+</html>

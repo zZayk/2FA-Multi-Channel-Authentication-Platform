@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify Flow · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">✅ Verify Flow</h1>
+    <p class="lead"><code>POST /otp/verify</code> — the invariants that make a code <em>one-time</em> and <em>time-bound</em>. All enforced in <code>otp_service.verify_otp</code>.</p>
+
+    <div class="mermaid">
+flowchart TD
+    Start(["POST /otp/verify"]) --> Auth{"valid API key?"}
+    Auth -- no --> R401["401"]
+    Auth -- yes --> Find["load latest ACTIVE otp for recipient"]
+    Find --> Exists{"exists?"}
+    Exists -- no --> Fail0["verified = false, status = expired"]
+    Exists -- yes --> TTL{"past expires_at?"}
+    TTL -- yes --> Exp1["set EXPIRED, verified = false"]
+    TTL -- no --> Used{"already used?"}
+    Used -- yes --> Fail2["verified = false"]
+    Used -- no --> Cap{"attempts >= max?"}
+    Cap -- yes --> Exp2["set EXPIRED, remaining = 0"]
+    Cap -- no --> Match{"HMAC match?"}
+    Match -- yes --> Win["set VERIFIED, stamp used_at, verified = true"]
+    Match -- no --> Inc["attempt_count + 1"]
+    Inc --> Lock{"now at max?"}
+    Lock -- yes --> Exp3["set EXPIRED"]
+    Lock -- no --> Retry["verified = false, remaining > 0"]
+    </div>
+    <div class="diagram-fallback"></div>
+
+    <div class="grid">
+      <div class="card"><b>⏱️ TTL</b><p class="muted">Default 300s. After that the code is dead even if correct. Setting: <code>OTP_TTL_SECONDS</code>.</p></div>
+      <div class="card"><b>1️⃣ Single-use</b><p class="muted"><code>used_at</code> stamped on success. A verified code can't be replayed.</p></div>
+      <div class="card"><b>🔒 Max attempts</b><p class="muted">Default 5 wrong tries → locked (EXPIRED). Stops brute-forcing 6 digits.</p></div>
+    </div>
+
+    <div class="note"><b>Why "latest active" only?</b> If a user requests 3 codes, only the newest valid one should verify. Older non-terminal rows are ignored — see <code>_latest_active_otp</code>.</div>
+
+    <h2>Concrete demo</h2>
+    <p class="tablabel">CORRECT CODE → 200</p>
+    <pre><code>POST /otp/verify
+X-API-Key: l2t_3vK9...redacted
+
+{ "recipient": "+21620000000", "code": "418207" }
+
+--- response ---
+{ "verified": true, "attempts_remaining": 5, "status": "verified" }</code></pre>
+
+    <p class="tablabel">WRONG CODE → 200 (note: still HTTP 200, body says false)</p>
+    <pre><code>{ "recipient": "+21620000000", "code": "000000" }
+
+--- response ---
+{ "verified": false, "attempts_remaining": 4, "status": "sent" }</code></pre>
+
+    <p class="tablabel">AFTER 5 WRONG TRIES → locked</p>
+    <pre><code>{ "verified": false, "attempts_remaining": 0, "status": "expired" }</code></pre>
+
+    <div class="warn"><b>Design choice:</b> verify returns HTTP <code>200</code> with <code>verified: false</code> for a wrong code — not a 4xx. The request was well-formed and authorised; the <em>answer</em> is just "no". Reserve 4xx for malformed/unauthorised requests.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>

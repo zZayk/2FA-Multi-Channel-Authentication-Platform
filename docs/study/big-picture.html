@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Big Picture · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">🗺️ Big Picture</h1>
+    <p class="lead">How the containers connect. Everything talks over the <code>2fa-net</code> Docker network.</p>
+
+    <div class="mermaid">
+flowchart TB
+    Client(["Client / curl / Frontend"]) -->|"HTTP + X-API-Key"| API
+    subgraph net["Docker network: 2fa-net"]
+      API["FastAPI&#160;·&#160;api:8000"]
+      DB[("PostgreSQL 15")]
+      REDIS[("Redis 7")]
+      WORKER["Celery Worker"]
+      BEAT["Celery Beat"]
+    end
+    API -->|"async SQLAlchemy"| DB
+    API -->|"enqueue .delay()"| REDIS
+    WORKER -->|"pull job"| REDIS
+    WORKER -->|"update status"| DB
+    BEAT -->|"schedule tasks"| REDIS
+    WORKER -->|"render + send"| SMS["TunisiaSMS adapter"]
+    WORKER -->|"render + send"| EMAIL["SMTP adapter"]
+    SMS -->|"HTTPS"| TSMS(["TunisiaSMS API"])
+    EMAIL -->|"SMTP"| MAIL(["Mail server / MailHog"])
+    </div>
+    <div class="diagram-fallback"></div>
+
+    <div class="card"><b>Why the split matters.</b> The API answers in milliseconds because it never waits for an SMS to send — it records intent (a DB row) and queues work (Redis). The worker absorbs slowness and flakiness (retries) without blocking any user.</div>
+
+    <h2>Who depends on whom</h2>
+    <table>
+      <tr><th>Container</th><th>Talks to</th><th>Why</th></tr>
+      <tr><td><code>api</code></td><td>db, redis</td><td>read/write OTP &amp; keys; enqueue dispatch jobs</td></tr>
+      <tr><td><code>worker</code></td><td>redis, db, SMS/SMTP</td><td>pull jobs, send messages, write status</td></tr>
+      <tr><td><code>beat</code></td><td>redis</td><td>enqueue periodic jobs (DLR poll, Month 2)</td></tr>
+      <tr><td><code>db</code></td><td>—</td><td>passive store</td></tr>
+      <tr><td><code>redis</code></td><td>—</td><td>passive broker/cache</td></tr>
+    </table>
+    <div class="note"><code>api</code>, <code>worker</code>, and <code>beat</code> are the <b>same Docker image</b> with different start commands. One codebase, three roles — no drift between web and async paths.</div>
+
+    <h2>Layered backend (inside the API box)</h2>
+    <div class="mermaid">
+flowchart LR
+    R["api/&#160;routers"] --> S["services/&#160;business logic"]
+    S --> M["models/&#160;ORM rows"]
+    S --> CH["services/channels&#160;adapters"]
+    S --> T["tasks/&#160;celery"]
+    R -.->|depends| SEC["core/security&#160;auth"]
+    R -.->|depends| CFG["core/config&#160;settings"]
+    </div>
+    <div class="diagram-fallback"></div>
+
+    <div class="warn"><b>Rule of thumb:</b> dependencies point <em>downward</em>. Routers know services; services know models. Models never import routers. Break that → circular imports + untestable code.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>

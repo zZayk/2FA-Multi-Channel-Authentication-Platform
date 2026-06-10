@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overview · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">What you built in Month 1</h1>
+    <p class="lead">A production-shaped 2FA service that issues one-time codes over SMS &amp; Email, stores them safely, sends them asynchronously, and guards its API with keys.</p>
+
+    <div class="card">
+      <b>The one-sentence mental model</b><br>
+      A client asks the <span class="pill api">API</span> for an OTP → the API saves a <em>hashed</em> code to <span class="pill data">Postgres</span> and drops a job on <span class="pill async">Redis</span> → a <span class="pill async">Celery worker</span> picks it up, renders a message, and hands it to a <span class="pill svc">channel adapter</span> (SMS or Email) → later the client submits the code and the API verifies it.
+    </div>
+
+    <h2>The 6 moving parts</h2>
+    <div class="grid">
+      <div class="card"><span class="pill api">API</span> <b>FastAPI</b><p class="muted">HTTP boundary. Validates input, checks the API key, calls services. Never touches SMS/SMTP directly.</p></div>
+      <div class="card"><span class="pill data">DB</span> <b>PostgreSQL 15</b><p class="muted">Source of truth. OTP rows (hashed) + API keys. Schema versioned by Alembic.</p></div>
+      <div class="card"><span class="pill async">Cache/Broker</span> <b>Redis 7</b><p class="muted">Three jobs: Celery broker, result backend, future rate-limit store.</p></div>
+      <div class="card"><span class="pill async">Worker</span> <b>Celery worker</b><p class="muted">Runs the slow stuff (send SMS/email) off the request thread, with retries.</p></div>
+      <div class="card"><span class="pill async">Scheduler</span> <b>Celery Beat</b><p class="muted">Cron-like. Will drive DLR polling in Month 2. Exactly one instance.</p></div>
+      <div class="card"><span class="pill svc">Adapters</span> <b>SMS + Email</b><p class="muted">TunisiaSMS (httpx) &amp; SMTP (aiosmtplib) behind one interface.</p></div>
+    </div>
+
+    <h2>How to use this guide</h2>
+    <ol>
+      <li><b>Read pages 1–2</b> (Big Picture → Request Lifecycle). That's ~80% of the understanding.</li>
+      <li><b>Skim pages 3–6</b> for the verify rules, state machine, data model, and named patterns.</li>
+      <li><b>Do pages 7–8</b> hands-on: run the tests, then boot the stack and watch a row move through the database live.</li>
+    </ol>
+
+    <div class="note">Every diagram maps 1:1 to real files. Where a step says <code>backend/app/...</code>, open that file alongside — this guide doubles as a code tour.</div>
+
+    <div class="good"><b>Where you are in the 4-month plan:</b> Month 1 (Foundation &amp; 2FA core) is <b>done</b> — OTP service, multi-channel send, REST API + auth, tests. Next: Month 2 = DLR polling, auto-fallback, anti-abuse engine.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>

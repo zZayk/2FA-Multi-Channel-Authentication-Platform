@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Observe Behaviour · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">🔭 Observe Behaviour</h1>
+    <p class="lead">Where to look when you want to <em>see</em> what the system is doing.</p>
+
+    <h2>1 · Swagger — poke the API by hand</h2>
+    <pre><code>http://localhost:8000/docs   # dev only</code></pre>
+    <p>Click <b>Authorize</b>, paste your <code>l2t_...</code> key, then try the endpoints live. Every route, schema, and status code is documented there.</p>
+
+    <h2>2 · Logs — structured JSON, traceable</h2>
+    <pre><code>docker compose logs -f api       # request side
+docker compose logs -f worker    # dispatch / send side
+docker compose logs -f beat      # scheduler</code></pre>
+    <p>Logs are JSON. Each OTP carries a <code>correlation_id</code> — grab it from the API log, grep the worker log for the same id, and follow one request across processes:</p>
+    <pre><code>docker compose logs worker | Select-String "b81d2f6a"</code></pre>
+
+    <h2>3 · Database — the source of truth</h2>
+    <pre><code>docker compose exec db psql -U app -d app</code></pre>
+    <pre><code>-- inside psql:
+SELECT id, channel, recipient, status, attempt_count, expires_at
+FROM otps ORDER BY created_at DESC LIMIT 5;
+
+SELECT name, key_prefix, last_used_at, revoked_at FROM api_keys;</code></pre>
+    <p>Watch a row move <code>pending → sent</code> after the worker runs, or <code>→ verified</code> after a correct verify.</p>
+
+    <h2>4 · Redis — the job queue</h2>
+    <pre><code>docker compose exec redis redis-cli</code></pre>
+    <pre><code># inside redis-cli:
+SELECT 1            # broker DB
+KEYS *              # celery keys
+LLEN celery         # pending job count</code></pre>
+
+    <h2>5 · See Email codes (optional MailHog)</h2>
+    <p>Add to <code>docker-compose.override.yml</code>, set <code>EMAIL_HOST=mailhog</code> / <code>EMAIL_PORT=1025</code>, then open the inbox UI:</p>
+    <pre><code>mailhog:
+  image: mailhog/mailhog
+  ports: ["1025:1025", "8025:8025"]   # 8025 = web inbox</code></pre>
+    <pre><code>http://localhost:8025   # every email the app "sends" lands here</code></pre>
+
+    <h2>Learning checklist — prove each behaviour</h2>
+    <ul class="checklist">
+      <li>☐ Request an OTP → a <code>pending</code> row appears in <code>otps</code>.</li>
+      <li>☐ Within ~1s → worker log shows a send attempt; row flips to <code>sent</code> (or <code>failed</code> with no gateway).</li>
+      <li>☐ Verify the correct code → row becomes <code>verified</code>, <code>used_at</code> set.</li>
+      <li>☐ Verify it <em>again</em> → second attempt fails (single-use proven).</li>
+      <li>☐ Verify 5 wrong codes → row goes <code>expired</code>, <code>attempt_count=5</code> (lockout proven).</li>
+      <li>☐ Call with no <code>X-API-Key</code> → <code>401</code>. Revoke a key, retry → <code>401</code>.</li>
+      <li>☐ Set <code>OTP_TTL_SECONDS=30</code>, wait 31s, verify correct code → fails (TTL proven).</li>
+    </ul>
+
+    <div class="note"><b>Fastest way to test TTL:</b> drop <code>OTP_TTL_SECONDS</code> to 30 in <code>.env</code>, <code>docker compose up -d</code> to reload, request a code, wait, then verify. No need to sit through 5 minutes.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>

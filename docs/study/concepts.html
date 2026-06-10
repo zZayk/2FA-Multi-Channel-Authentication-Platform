@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Core Concepts · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">💡 Core Concepts</h1>
+    <p class="lead">The named patterns behind the code. Open each for the "why" — then search the bold terms to go deeper.</p>
+
+    <details class="concept" open><summary>Async I/O &amp; the event loop <span class="tag">FastAPI · asyncpg</span></summary>
+      <div class="body">Normal code does one thing at a time and <em>waits</em> on slow stuff (DB, network). Async code hands control back to an "event loop" during the wait, so one thread serves thousands of requests. That's why we use <code>async def</code>, async SQLAlchemy, and asyncpg everywhere.
+      <div class="twolvl"><b>DEEP:</b> a blocking DB call freezes the whole loop → every user waits. One slow synchronous query can tank the entire API. Search: <b>Python asyncio event loop</b>, <b>FastAPI concurrency</b>.</div></div>
+    </details>
+
+    <details class="concept"><summary>HMAC vs bcrypt for secrets <span class="tag">otp_service · api_key_service</span></summary>
+      <div class="body">bcrypt is <em>deliberately slow</em> to defend weak, human-chosen passwords against offline cracking. Our codes are random 6-digit / 32-byte secrets with short life + lockout — slowness buys nothing. <b>HMAC-SHA256</b> keyed with <code>SECRET_KEY</code> is fast, and a DB dump alone can't be replayed (the attacker also needs the key).
+      <div class="twolvl"><b>DEEP:</b> HMAC is deterministic — same input → same hash — which lets us look a key up by an indexed equality query. bcrypt's per-hash salt forbids that. Search: <b>HMAC</b>, <b>keyed hash</b>, <b>constant-time compare</b>.</div></div>
+    </details>
+
+    <details class="concept"><summary>Strategy / Adapter pattern <span class="tag">services/channels</span></summary>
+      <div class="body">All channels implement one interface: <code>ChannelAdapter.send(...)</code>. Dispatch calls <code>get_adapter(channel).send(...)</code> and doesn't care if it's SMS or Email. Add WhatsApp later = drop a new file, register it, done. Nothing upstream changes.
+      <div class="twolvl"><b>DEEP:</b> each adapter is also an "anti-corruption layer" — it translates a messy external API (TunisiaSMS quirks, SMTP codes) into our clean <code>SendResult</code>. Search: <b>Strategy pattern</b>, <b>Hexagonal architecture</b>, <b>anti-corruption layer</b>.</div></div>
+    </details>
+
+    <details class="concept"><summary>Task queue &amp; why Beat is separate <span class="tag">Celery · Redis</span></summary>
+      <div class="body">The API drops a message on Redis (<code>.delay()</code>) and returns instantly. A <b>worker</b> pulls and runs it. <b>Beat</b> is a scheduler that fires periodic jobs. Beat must be a single container — run it inside scaled workers and you'd get N schedulers firing every job N times (duplicate SMS!).
+      <div class="twolvl"><b>DEEP:</b> <code>acks_late=True</code> means a job is acknowledged only after it finishes, so a crashed worker's job is redelivered. Search: <b>Celery periodic tasks</b>, <b>at-least-once delivery</b>, <b>idempotency</b>.</div></div>
+    </details>
+
+    <details class="concept"><summary>Transient vs permanent errors → retries <span class="tag">tasks/dispatch</span></summary>
+      <div class="body">A timeout or 5xx is <em>transient</em> — try again. A bad phone number or 401 is <em>permanent</em> — retrying just spams. We model this as two exception types; Celery's <code>autoretry_for=(TransientChannelError,)</code> retries only the right ones, with exponential backoff + jitter.
+      <div class="twolvl"><b>DEEP:</b> jitter randomises backoff so a fleet of workers doesn't all retry at the same instant (thundering herd). Search: <b>exponential backoff jitter</b>, <b>retry storm</b>.</div></div>
+    </details>
+
+    <details class="concept"><summary>Dependency Injection &amp; overrides <span class="tag">Depends · tests</span></summary>
+      <div class="body">FastAPI <code>Depends(get_session)</code> / <code>Depends(require_api_key)</code> injects what a route needs. In tests we swap the real dependency for a stub via <code>app.dependency_overrides</code> — that's how schema tests run without a real DB or key.
+      <div class="twolvl"><b>DEEP:</b> security deps resolve <em>before</em> body validation, so a missing key returns 401 before a malformed body could 422. Search: <b>FastAPI dependency injection</b>, <b>test doubles</b>.</div></div>
+    </details>
+
+    <details class="concept"><summary>Migrations &amp; drift <span class="tag">Alembic</span></summary>
+      <div class="body">Models describe the schema in Python; migrations are the versioned SQL that builds it in prod. They must agree. The drift test applies all migrations to a throwaway DB and diffs against the models — fails if someone edits a model but forgets a migration.
+      <div class="twolvl"><b>DEEP:</b> <code>create_all</code> works once but can't evolve a live DB safely; migrations are reversible, ordered steps. Search: <b>Alembic autogenerate</b>, <b>schema migration</b>.</div></div>
+    </details>
+
+    <details class="concept"><summary>12-factor config &amp; SecretStr <span class="tag">core/config</span></summary>
+      <div class="body">All settings come from environment / <code>.env</code> via Pydantic <code>BaseSettings</code> — typed, validated, fail-fast on boot. Secrets use <code>SecretStr</code> so an accidental log prints <code>**********</code>, not the value.
+      <div class="twolvl"><b>DEEP:</b> <code>get_settings()</code> is <code>@lru_cache</code>d → one parsed config per process. Search: <b>12-factor config</b>, <b>pydantic-settings</b>.</div></div>
+    </details>
+
+    <div class="note">Each pattern's <em>specific</em> trade-off for this project is logged in <code>docs/decisions.md</code> with the reasoning.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>
