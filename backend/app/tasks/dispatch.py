@@ -29,10 +29,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 
-from app.core.database import SessionLocal
+from app.core.database import TaskSessionLocal
 from app.models.otp import OTP, OTPStatus
 from app.services.channels import (  # noqa: F401 — public re-exports
     PermanentChannelError,
@@ -60,7 +61,7 @@ async def _dispatch_async(otp_id: uuid.UUID, code: str) -> str:
     Returns the final OTPStatus value (string) for observability.
     Raises TransientChannelError → Celery retries.
     """
-    async with SessionLocal() as session:
+    async with TaskSessionLocal() as session:
         otp = await session.get(OTP, otp_id)
         if otp is None:
             # Row vanished — possible test cleanup or race. Permanent.
@@ -95,12 +96,18 @@ async def _dispatch_async(otp_id: uuid.UUID, code: str) -> str:
                 },
             )
             otp.status = OTPStatus.FAILED
+            otp.failed_at = datetime.now(timezone.utc)
             await session.commit()
             return OTPStatus.FAILED.value
 
         # Map send outcome → OTP status transition.
         if result.outcome is SendOutcome.ACCEPTED:
             otp.status = OTPStatus.SENT
+            otp.sent_at = datetime.now(timezone.utc)
+            # Persist the provider id — without it the DLR poll has no key to
+            # query delivery status against. (SMTP returns None; that's fine,
+            # email has no DLR step.)
+            otp.provider_message_id = result.provider_message_id
             logger.info(
                 "dispatch.sent",
                 extra={
@@ -118,6 +125,7 @@ async def _dispatch_async(otp_id: uuid.UUID, code: str) -> str:
             )
         else:  # REJECTED
             otp.status = OTPStatus.FAILED
+            otp.failed_at = datetime.now(timezone.utc)
             logger.warning(
                 "dispatch.rejected",
                 extra={

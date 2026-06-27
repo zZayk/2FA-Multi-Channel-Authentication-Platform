@@ -63,12 +63,20 @@ celery_app.conf.update(
 # -----------------------------------------------------------------------------
 # Periodic schedule (Beat)
 # -----------------------------------------------------------------------------
-# Real DLR polling task lands in Week 5 (Month 2). Empty schedule for now —
-# Beat boots cleanly with nothing to fire, then we'll add entries like:
-#   "poll-tunisiasms-dlr": {
-#       "task": "app.tasks.dlr.poll_pending",
-#       "schedule": 30.0,   # every 30 seconds
-#   },
-celery_app.conf.beat_schedule = {}
+# [LEARN] Beat is a *separate container* running this same module with the
+# `beat` command. It reads this dict and enqueues the named task on its
+# `schedule` interval. The worker (also this module) executes it. One Beat,
+# N workers — which is exactly why Beat must never run inside the worker
+# (N schedulers → N× duplicate enqueues). See docs/decisions.md [infra].
+#
+# `schedule` is seconds (float) for a fixed interval; use crontab(...) for
+# wall-clock times. Interval is config-driven so ops can tune cadence without
+# a code change.
+celery_app.conf.beat_schedule = {
+    "poll-tunisiasms-dlr": {
+        "task": "app.tasks.dlr.poll_pending",
+        "schedule": float(settings.DLR_POLL_INTERVAL_SECONDS),
+    },
+}
 
 # Task modules are listed via `include=[...]` above; nothing else needed here.
