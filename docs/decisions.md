@@ -17,6 +17,87 @@ Topics used so far: `repo`, `layout`, `infra`, `api`, `config`, `db`, `model`, `
 
 ---
 
+## 2026-06-27
+
+### Month 2 · Slice 1 fix — Celery async engine
+
+- **[tasks]** Dedicated `NullPool` engine (`TaskSessionLocal`) for Celery tasks; API keeps its pooled engine.
+  _Reason:_ Each task bridges sync→async with `asyncio.run()`, which opens **and closes** a fresh event loop. A pooled asyncpg connection outlives that loop and crashes the next task ("got Future attached to a different loop"). NullPool opens/closes per call so nothing crosses loops. Caught live (DLR poll crash); the same bug latently broke `dispatch_otp` on its 2nd send per worker.
+
+### Month 2 · Slice 2 — user-initiated fallback + delivery metrics
+
+- **[api]** Fallback is **user-initiated**, not automatic: SMS FAILED → client offers "try another method" → `POST /otp/resend`.
+  _Reason:_ Product decision — the user chooses the alternate channel. Avoids surprise sends and the Redis plaintext-stash an auto-resend of the same code would need. DLR poll only records FAILED + logs `fallback_available`.
+
+- **[api]** `GET /otp/{id}` status endpoint exposes timestamps + a `fallback_available` flag.
+  _Reason:_ The client polls it after `/request` to learn DELIVERED vs FAILED and decide whether to offer a resend.
+
+- **[api]** `POST /otp/resend` issues a **fresh** code on the chosen channel, linked by `correlation_id`, through the same abuse gate as `/request`.
+  _Reason:_ Clean audit chain (one correlation_id across channels); no plaintext reuse; fallback can't bypass anti-abuse.
+
+- **[api]** `/otp/metrics` route declared **before** `/otp/{otp_id}`.
+  _Reason:_ A literal path must out-rank a path-param sibling; UUID typing would reject "metrics" anyway, but explicit ordering is the robust habit.
+
+- **[db]** Delivery metrics aggregate over the **timestamp** columns, not `status`.
+  _Reason:_ `status` is mutable — a delivered OTP that is then verified flips to VERIFIED, losing DELIVERED. `delivered_at`/`failed_at` are write-once, giving a stable delivery picture. (This is why those columns were added in Slice 1.)
+
+### Month 2 · Slice 3 — anti-abuse engine
+
+- **[model]** `blacklist` table: `value` unique-indexed + `kind` enum (recipient|ip).
+  _Reason:_ O(1) indexed denylist short-circuit; a durable, auditable table (who/why/when) beats a Redis set for v1 — blocks are rare, a cache can front it later.
+
+- **[api]** Engine is **layered with short-circuit + explainable reason**: blacklist → rate rules → ML, cheapest/most-certain first.
+  _Reason:_ Stop at the first definite block; every decision carries a human-readable `reason` (logs/admin/support) — never a silent 403.
+
+- **[api]** Engine **fails OPEN** (allow) on unexpected error, logged loudly.
+  _Reason:_ A broken abuse engine locking every user out of 2FA is worse than one slipped request. Revisit per threat model.
+
+- **[model]** Capture `ip_address` (X-Forwarded-For aware) for per-IP rate rules + future GeoIP.
+  _Reason:_ Behavioral profiling needs the source IP; nullable so trusted/internal callers can omit it. XFF is spoofable — trust only behind a controlled proxy (Month-4 pins the trusted set).
+
+- **[tasks]** BLOCKED attempts are recorded as audit rows, but excluded from rate counts (`status != BLOCKED`) and delivery metrics (`sent_at IS NULL`).
+  _Reason:_ The dashboard/heatmap can show *suppressed* abuse without the block compounding itself or polluting delivery rates.
+
+- **[ml]** Isolation Forest is **wired but stubbed** (neutral score) — not trained on synthetic data, no scikit-learn dependency yet.
+  _Reason:_ A model fit on invented traffic produces confident-but-meaningless blocks. The rule engine carries the load until real traffic exists; the call site + feature contract are fixed so training drops in without touching callers.
+
+- **[infra]** MailHog added to the dev override (`EMAIL_HOST=mailhog`).
+  _Reason:_ Makes the email delivery path demoable end-to-end — OTP emails land in a viewable inbox (`:8025`), `sent_at` is set, and metrics populate — with no real SMTP.
+
+## 2026-06-10
+
+### Month 2 · Slice 1 — DLR (delivery receipt) polling
+
+- **[tasks]** DLR via Beat *polling*, not a provider webhook, in v1.
+  _Reason:_ No public inbound HTTPS surface / signature handling; works behind NAT; trivially testable. Webhook receiver is a Month-4 upgrade and can coexist (webhook fast-path + poll safety net).
+
+- **[tasks]** `poll_pending` is a reconciliation loop: SENT → DELIVERED/FAILED.
+  _Reason:_ SMS delivery is async — send returns 202/ACCEPTED, the carrier confirms seconds-to-minutes later. The loop is the only way to advance the state machine without a push.
+
+- **[tasks]** Timeout sweep: a row still SENT past `DLR_TIMEOUT_SECONDS` is failed *without* a DLR call.
+  _Reason:_ A provider that simply stops answering must never wedge an OTP in SENT forever; querying an ancient id is pointless. Caps worst-case fallback latency.
+
+- **[tasks]** DLR query errors (timeout / 5xx / 404 / garbage body) map to PENDING/UNKNOWN, **never** DELIVERED.
+  _Reason:_ Fail-safe — a flaky DLR endpoint must not silently mark an undelivered 2FA as delivered. Next tick or the timeout sweep decides.
+
+- **[api]** `query_dlr` is an ABC method defaulting to `NotImplementedError`; only the SMS adapter overrides it.
+  _Reason:_ Email (SMTP 250) is terminal at send — there is no async receipt. The poll only ever queries SMS rows, so email never hits the default.
+
+- **[model]** `provider_message_id` now *persisted* on send ACCEPTED (was log-only).
+  _Reason:_ It's the lookup key the DLR poll queries TunisiaSMS with — without it on the row, polling is impossible. The blocker that motivated this slice's schema change.
+
+- **[model]** Added `sent_at` / `delivered_at` / `failed_at` per-transition timestamps.
+  _Reason:_ Lets Slice 2 compute per-channel delivery-rate + delivery-latency with a plain SQL aggregation — no event-sourcing/`status_history` table needed yet.
+
+- **[db]** Migration 0003 adds an index on `(status, sent_at)` plus `provider_message_id`.
+  _Reason:_ Supports the poll's hot query — "in-flight SMS rows, oldest first" — and provider-id reverse lookups / future webhook correlation.
+
+- **[config]** DLR cadence/limits are settings: `DLR_POLL_INTERVAL_SECONDS`, `DLR_POLL_BATCH_SIZE`, `DLR_TIMEOUT_SECONDS`.
+  _Reason:_ Ops tunes poll frequency, per-tick load, and the latency budget without a code change. Dropped an earlier `DLR_POLL_WINDOW_SECONDS` — the batch limit + timeout sweep made it dead config.
+
+- **[tasks]** `_enqueue_fallback` carved as a no-op hook now; real SMS→Email enqueue lands in Slice 2.
+  _Reason:_ The call sites (FAILED + timeout) already exist, so Slice 2 fills one function without touching the loop's control flow.
+
 ## 2026-05-25
 
 ### CI & tests
