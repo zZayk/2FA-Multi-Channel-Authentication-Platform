@@ -37,8 +37,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.core.database import Base
 
 # Register all models on Base.metadata.
-import app.models.otp      # noqa: F401
-import app.models.api_key  # noqa: F401
+import app.models.otp        # noqa: F401
+import app.models.api_key    # noqa: F401
+import app.models.blacklist  # noqa: F401
 
 pytestmark = pytest.mark.integration
 

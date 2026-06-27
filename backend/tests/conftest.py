@@ -152,8 +152,9 @@ async def db_engine(pg_url: str):
 
     from app.core.database import Base
     # Import all model modules so their tables register on Base.metadata.
-    import app.models.otp      # noqa: F401
-    import app.models.api_key  # noqa: F401
+    import app.models.otp        # noqa: F401
+    import app.models.api_key    # noqa: F401
+    import app.models.blacklist  # noqa: F401
 
     engine = create_async_engine(pg_url, future=True)
     async with engine.begin() as conn:
