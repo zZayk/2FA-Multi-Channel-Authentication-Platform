@@ -26,6 +26,8 @@ from app.core.config import get_settings
 from app.models.otp import OTPChannel
 from app.services.channels.base import (
     ChannelAdapter,
+    DlrResult,
+    DlrStatus,
     PermanentChannelError,
     SendOutcome,
     SendResult,
@@ -37,6 +39,31 @@ logger = logging.getLogger(__name__)
 
 # Connect ≤ 5s, read ≤ 10s — total cap protects the worker from a stuck call.
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0)
+
+# [LEARN] DLR status code mapping (Anti-Corruption Layer, continued).
+# TunisiaSMS / GSM 03.40 carriers return short status tokens. We normalise
+# the carrier's vocabulary into our 4-state DlrStatus. Keys are uppercased
+# before lookup so "DELIVRD"/"delivered" both match. Anything not in this map
+# falls through to UNKNOWN — fail-safe, never silently treat as delivered.
+_DLR_STATUS_MAP: dict[str, DlrStatus] = {
+    # delivered
+    "DELIVERED": DlrStatus.DELIVERED,
+    "DELIVRD": DlrStatus.DELIVERED,
+    # failed / undeliverable — all terminal-bad → triggers fallback
+    "FAILED": DlrStatus.FAILED,
+    "UNDELIV": DlrStatus.FAILED,
+    "UNDELIVERABLE": DlrStatus.FAILED,
+    "REJECTD": DlrStatus.FAILED,
+    "REJECTED": DlrStatus.FAILED,
+    "EXPIRED": DlrStatus.FAILED,
+    "DELETED": DlrStatus.FAILED,
+    # still in flight
+    "PENDING": DlrStatus.PENDING,
+    "QUEUED": DlrStatus.PENDING,
+    "SENT": DlrStatus.PENDING,
+    "ACCEPTED": DlrStatus.PENDING,
+    "ENROUTE": DlrStatus.PENDING,
+}
 
 
 class TunisiaSMSAdapter(ChannelAdapter):
@@ -105,6 +132,76 @@ class TunisiaSMSAdapter(ChannelAdapter):
             raise TransientChannelError(f"TunisiaSMS network error: {e}") from e
 
         return self._classify(resp, correlation_id=correlation_id)
+
+    # -------------------------------------------------------------------------
+    # DLR polling
+    # -------------------------------------------------------------------------
+
+    async def query_dlr(
+        self,
+        *,
+        provider_message_id: str,
+        correlation_id: uuid.UUID,
+    ) -> DlrResult:
+        """
+        GET the delivery status of one message from TunisiaSMS.
+
+        [LEARN] Defensive default = PENDING/UNKNOWN, never DELIVERED.
+        A flaky DLR endpoint (timeout, 5xx, garbage body) must NOT cause us
+        to mark an OTP delivered when it wasn't — that would silently swallow
+        a failed 2FA. So every error path returns a non-terminal status and
+        lets the next poll (or the timeout sweep) decide.
+        """
+        url = f"{self._base_url}/messages/{provider_message_id}/dlr"
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "X-Correlation-ID": str(correlation_id),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.get(url, headers=headers)
+        except httpx.HTTPError as e:
+            # Network/timeout — transient. Stay PENDING; poll again next tick.
+            logger.warning(
+                "dlr.query_error",
+                extra={
+                    "provider_message_id": provider_message_id,
+                    "correlation_id": str(correlation_id),
+                    "error": str(e),
+                },
+            )
+            return DlrResult(status=DlrStatus.PENDING, error_reason=str(e))
+
+        if resp.status_code == 404:
+            # Provider has no record of this id — lost or never accepted.
+            return DlrResult(status=DlrStatus.UNKNOWN, error_reason="not_found")
+
+        if resp.status_code >= 400:
+            logger.warning(
+                "dlr.query_bad_status",
+                extra={
+                    "provider_message_id": provider_message_id,
+                    "status": resp.status_code,
+                },
+            )
+            return DlrResult(
+                status=DlrStatus.PENDING,
+                error_reason=f"http_{resp.status_code}",
+            )
+
+        try:
+            data: dict[str, Any] = resp.json() if resp.content else {}
+        except ValueError:
+            data = {}
+
+        raw_status = str(data.get("status") or data.get("dlr") or "").upper()
+        status = _DLR_STATUS_MAP.get(raw_status, DlrStatus.UNKNOWN)
+        return DlrResult(
+            status=status,
+            error_reason=None if status is DlrStatus.DELIVERED else raw_status or None,
+            raw=data,
+        )
 
     # -------------------------------------------------------------------------
     # Status mapping

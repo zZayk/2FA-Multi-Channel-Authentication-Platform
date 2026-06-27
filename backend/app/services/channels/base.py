@@ -66,6 +66,45 @@ class SendResult:
 
 
 # =============================================================================
+# DLR (Delivery Receipt) value objects
+# =============================================================================
+# [LEARN] Why a *separate* result type from SendResult?
+# `send()` is synchronous-ish: "did the provider accept it?" → ACCEPTED.
+# DLR answers a *later, different* question: "did it actually reach the
+# handset?" SMS delivery is asynchronous — the provider returns 202 in
+# milliseconds, then a carrier confirmation (or failure) arrives seconds-to-
+# minutes later. Conflating the two states (acceptance vs delivery) is a
+# classic SMS-integration bug. Distinct types keep the state machine honest.
+# Read more: GSM 03.40 SMS-STATUS-REPORT (the DLR concept at protocol level).
+
+class DlrStatus(str, enum.Enum):
+    """
+    Terminal-vs-pending classification of a delivery receipt.
+
+      DELIVERED — carrier confirmed handset receipt. Terminal (good).
+      FAILED    — carrier rejected / undeliverable. Terminal (bad) → fallback.
+      PENDING   — provider still has it in flight; poll again later.
+      UNKNOWN   — provider has no record of this id (lost / bad id). Treated
+                  as non-terminal but logged loudly; the timeout sweep will
+                  eventually FAIL it so it never wedges forever.
+    """
+
+    DELIVERED = "delivered"
+    FAILED = "failed"
+    PENDING = "pending"
+    UNKNOWN = "unknown"
+
+
+@dataclass(slots=True)
+class DlrResult:
+    """Returned by `ChannelAdapter.query_dlr(...)`."""
+
+    status: DlrStatus
+    error_reason: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+# =============================================================================
 # Error hierarchy
 # =============================================================================
 
@@ -117,6 +156,24 @@ class ChannelAdapter(ABC):
           - never log or store the body in plaintext beyond the call scope
         """
         raise NotImplementedError
+
+    async def query_dlr(
+        self,
+        *,
+        provider_message_id: str,
+        correlation_id: uuid.UUID,
+    ) -> DlrResult:
+        """
+        Ask the provider for the delivery status of a previously-sent message.
+
+        Default raises — not every channel has async delivery receipts.
+        Email (SMTP) is terminal at send time (250 = queued/accepted by the
+        next hop), so the email adapter intentionally does NOT override this.
+        The DLR poll task only ever queries channels that do (SMS).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support DLR polling"
+        )
 
     async def aclose(self) -> None:
         """Cleanup hook — subclasses override if they hold open connections."""
