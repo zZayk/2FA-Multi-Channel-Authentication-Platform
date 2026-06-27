@@ -31,7 +31,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -95,6 +95,17 @@ class VerifyOutcome:
     status: OTPStatus
 
 
+@dataclass(slots=True)
+class ChannelMetrics:
+    channel: OTPChannel
+    total: int            # rows actually dispatched (sent_at set)
+    delivered: int
+    failed: int
+    in_flight: int        # dispatched but no terminal DLR yet
+    delivery_rate: float  # delivered / (delivered + failed)
+    avg_delivery_seconds: float | None
+
+
 # =============================================================================
 # Service operations
 # =============================================================================
@@ -105,6 +116,7 @@ async def create_otp(
     channel: OTPChannel,
     recipient: str,
     correlation_id: uuid.UUID | None = None,
+    ip_address: str | None = None,
 ) -> tuple[OTP, str]:
     """
     Create an OTP row and return (orm_row, plaintext_code).
@@ -127,12 +139,46 @@ async def create_otp(
         status=OTPStatus.PENDING,
         expires_at=now + timedelta(seconds=settings.OTP_TTL_SECONDS),
         correlation_id=correlation_id or uuid.uuid4(),
+        ip_address=ip_address,
         attempt_count=0,
     )
     session.add(otp)
     await session.commit()
     await session.refresh(otp)
     return otp, code
+
+
+async def record_blocked(
+    session: AsyncSession,
+    *,
+    channel: OTPChannel,
+    recipient: str,
+    ip_address: str | None = None,
+    correlation_id: uuid.UUID | None = None,
+) -> OTP:
+    """
+    Persist a BLOCKED audit row for a request the abuse engine refused.
+
+    [LEARN] We record the block (not just 429-and-forget) so the dashboard /
+    heatmap can show *suppressed* abuse, and so an investigator can see who was
+    hit and when. No code is ever delivered; the `code_hash` is a throwaway
+    sentinel that satisfies NOT NULL and is never sent anywhere. The row is
+    born already-expired — it's a marker, not a live OTP. Counted out of rate
+    rules (status != BLOCKED) and out of delivery metrics (sent_at IS NULL).
+    """
+    otp = OTP(
+        code_hash=hash_code(generate_code()),  # sentinel — never delivered
+        channel=channel,
+        recipient=recipient,
+        status=OTPStatus.BLOCKED,
+        expires_at=_utcnow(),
+        correlation_id=correlation_id or uuid.uuid4(),
+        ip_address=ip_address,
+    )
+    session.add(otp)
+    await session.commit()
+    await session.refresh(otp)
+    return otp
 
 
 async def _latest_active_otp(
@@ -230,3 +276,59 @@ async def verify_otp(
     return VerifyOutcome(
         verified=False, attempts_remaining=attempts_remaining, status=otp.status
     )
+
+
+# =============================================================================
+# Read / metrics
+# =============================================================================
+
+async def get_otp(session: AsyncSession, otp_id: uuid.UUID) -> OTP | None:
+    """Fetch one OTP by id (for the status endpoint). None if not found."""
+    return await session.get(OTP, otp_id)
+
+
+async def delivery_metrics(session: AsyncSession) -> list[ChannelMetrics]:
+    """
+    Per-channel delivery aggregates for the dashboard / SMS-vs-Email view.
+
+    [LEARN] We aggregate over the *timestamp* columns, not the current
+    `status`. Status is mutable — a delivered OTP that the user then verifies
+    flips to VERIFIED, losing the DELIVERED marker. `delivered_at` / `failed_at`
+    are write-once, so counting their non-null occurrences gives a stable
+    delivery picture regardless of later lifecycle transitions.
+
+    `func.count(col)` counts non-null values; latency averages
+    (delivered_at - sent_at) and Postgres skips rows where either side is null.
+    """
+    stmt = (
+        select(
+            OTP.channel,
+            func.count(OTP.sent_at).label("total"),
+            func.count(OTP.delivered_at).label("delivered"),
+            func.count(OTP.failed_at).label("failed"),
+            func.avg(
+                func.extract("epoch", OTP.delivered_at - OTP.sent_at)
+            ).label("avg_latency"),
+        )
+        .where(OTP.sent_at.is_not(None))
+        .group_by(OTP.channel)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    metrics: list[ChannelMetrics] = []
+    for channel, total, delivered, failed, avg_latency in rows:
+        terminal = delivered + failed
+        metrics.append(
+            ChannelMetrics(
+                channel=channel,
+                total=total,
+                delivered=delivered,
+                failed=failed,
+                in_flight=total - terminal,
+                delivery_rate=(delivered / terminal) if terminal else 0.0,
+                avg_delivery_seconds=(
+                    round(float(avg_latency), 2) if avg_latency is not None else None
+                ),
+            )
+        )
+    return metrics

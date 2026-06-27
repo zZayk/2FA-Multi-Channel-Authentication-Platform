@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pythonjsonlogger import jsonlogger
 
+from app.api import admin as admin_router
 from app.api import otp as otp_router
 from app.core.config import get_settings
 
@@ -36,6 +37,10 @@ _OPENAPI_TAGS = [
             "Issue and verify one-time passwords across SMS and Email. "
             "All endpoints require a valid `X-API-Key` header."
         ),
+    },
+    {
+        "name": "admin",
+        "description": "Anti-abuse denylist management. Requires `X-API-Key`.",
     },
 ]
 
@@ -160,6 +165,7 @@ def create_app() -> FastAPI:
 
     # --- Routers ------------------------------------------------------------
     app.include_router(otp_router.router)
+    app.include_router(admin_router.router)
 
     return app
 

@@ -95,6 +95,34 @@ class OTPVerifyRequest(BaseModel):
     )
 
 
+class OTPResendRequest(BaseModel):
+    """
+    POST /otp/resend — re-issue an OTP on a (usually different) channel.
+
+    This is the *user-initiated* fallback: when an SMS shows FAILED, the client
+    offers "try another method" and calls this with channel=email + the user's
+    email. Pass the original `correlation_id` to keep the whole auth attempt
+    traceable as one chain across channels.
+    """
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    channel: OTPChannel = Field(..., description="Channel to resend on")
+    recipient: str = Field(..., min_length=3, max_length=255)
+    correlation_id: uuid.UUID | None = Field(
+        default=None,
+        description="Original attempt's correlation_id — links the resend to it",
+    )
+
+    @field_validator("recipient")
+    @classmethod
+    def _check_recipient(cls, v: str, info) -> str:
+        channel = info.data.get("channel")
+        if channel is None:
+            return v
+        return _validate_recipient(channel, v)
+
+
 # =============================================================================
 # Responses
 # =============================================================================
@@ -117,6 +145,47 @@ class OTPVerifyResponse(BaseModel):
     verified: bool
     attempts_remaining: int = Field(..., ge=0)
     status: OTPStatus
+
+
+class OTPStatusResponse(BaseModel):
+    """
+    GET /otp/{id} — delivery status of one OTP.
+
+    The client polls this after /otp/request to learn whether the SMS landed
+    (DELIVERED) or failed (FAILED). On FAILED it may offer the user a resend.
+    Never exposes `code_hash` or the plaintext.
+    """
+
+    id: uuid.UUID
+    channel: OTPChannel
+    recipient: str
+    status: OTPStatus
+    sent_at: datetime | None = None
+    delivered_at: datetime | None = None
+    failed_at: datetime | None = None
+    correlation_id: uuid.UUID
+    #: Convenience flag for the client UI — true when a fallback resend makes sense.
+    fallback_available: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChannelDeliveryMetrics(BaseModel):
+    """Per-channel delivery aggregates for the dashboard."""
+
+    channel: OTPChannel
+    total: int
+    delivered: int
+    failed: int
+    in_flight: int
+    delivery_rate: float = Field(..., ge=0.0, le=1.0)
+    avg_delivery_seconds: float | None = None
+
+
+class DeliveryMetricsResponse(BaseModel):
+    """GET /otp/metrics — SMS-vs-Email delivery performance."""
+
+    channels: list[ChannelDeliveryMetrics]
 
 
 # =============================================================================
