@@ -9,6 +9,9 @@ services:
     # Bind-mount source for hot reload (uvicorn --reload watches the FS).
     volumes:
       - ./backend/app:/app/app
+    environment:
+      # Reach the dev SMTP catcher (MailHog) instead of localhost.
+      - EMAIL_HOST=mailhog
     command: >
       uvicorn app.main:app
       --host 0.0.0.0
@@ -18,12 +21,24 @@ services:
   worker:
     volumes:
       - ./backend/app:/app/app
+    environment:
+      - EMAIL_HOST=mailhog
     # No --reload for Celery; restart container after code changes,
     # or use `watchmedo auto-restart` if rapid worker iteration becomes painful.
 
   beat:
     volumes:
       - ./backend/app:/app/app
+
+  # MailHog — dev SMTP server + web inbox. Email OTPs land here (viewable at
+  # http://localhost:8025) so the delivery path is demoable without a real SMTP.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI
+    networks:
+      - 2fa-net
 
   frontend:
     volumes:
