@@ -84,6 +84,14 @@ class OTP(Base):
     # No FK to a User table yet; this service may run standalone.
     recipient: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
 
+    # Provider-side message id, captured on a successful send (SMS adapter
+    # returns it; SMTP has none). This is the lookup key the DLR poll uses to
+    # ask TunisiaSMS "did message X land?". Indexed for the poll's reverse
+    # lookups and webhook correlation later.
+    provider_message_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+
     status: Mapped[OTPStatus] = mapped_column(
         Enum(OTPStatus, name="otp_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
@@ -105,8 +113,30 @@ class OTP(Base):
         nullable=True,
     )
 
+    # Delivery lifecycle timestamps — stamped by the dispatch task / DLR poll.
+    # [LEARN] Storing each transition time (not just the current status) lets
+    # Slice 2 compute delivery latency + per-channel delivery-rate metrics with
+    # a plain SQL aggregation — no event-sourcing table needed yet.
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     # Verify attempts — service caps at settings.MAX_OTP_ATTEMPTS.
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Client IP that requested this OTP — fed to the anti-abuse engine
+    # (per-IP rate rules now; GeoIP enrichment later). Nullable: internal /
+    # trusted callers may omit it.
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True, index=True)
 
     # Trace ID — flows api → service → task → channel adapter → DB → logs.
     correlation_id: Mapped[uuid.UUID] = mapped_column(

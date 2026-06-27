@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
 
@@ -59,6 +60,51 @@ engine: AsyncEngine = _build_engine()
 # expire_on_commit=False → ORM objects stay usable after commit (no auto-refresh).
 SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     bind=engine,
+    expire_on_commit=False,
+    autoflush=False,
+)
+
+
+# =============================================================================
+# Celery-task engine — separate, NullPool
+# =============================================================================
+# [NEW CONCEPT] "Don't share a pooled async engine across asyncio.run() loops".
+#
+# [LEARN] The engine above pools connections (pool_size=10). That's correct for
+# the API: it runs inside ONE long-lived event loop, so a pooled asyncpg
+# connection stays bound to a live loop and gets reused cheaply.
+#
+# Celery is different. Each task bridges sync→async with `asyncio.run(coro)`,
+# which creates a FRESH event loop and CLOSES it when the coro returns. A
+# pooled connection checked out during task #1 is handed back to the pool
+# still bound to task #1's now-dead loop. Task #2 checks it out on a new loop
+# and asyncpg raises:
+#     RuntimeError: got Future <...> attached to a different loop
+#
+# Fix: tasks use a NullPool engine. NullPool keeps no idle connections — every
+# checkout opens a new asyncpg connection inside the current loop and closes it
+# on session exit. Nothing survives across loops, so nothing can be reused on a
+# dead one. The engine object itself (just dialect + config) is safe to reuse.
+#
+# Read more:
+#   - https://docs.sqlalchemy.org/en/20/core/pooling.html#using-connection-pools-with-multiprocessing-or-os-fork
+#   - https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#using-multiple-asyncio-event-loops
+def _build_task_engine() -> AsyncEngine:
+    settings = get_settings()
+    return create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        poolclass=NullPool,
+        future=True,
+    )
+
+
+task_engine: AsyncEngine = _build_task_engine()
+
+# Session factory for code running inside a Celery task (`asyncio.run`).
+# Use this — NOT SessionLocal — from anything under app/tasks/.
+TaskSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    bind=task_engine,
     expire_on_commit=False,
     autoflush=False,
 )

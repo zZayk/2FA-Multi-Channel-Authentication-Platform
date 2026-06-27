@@ -31,8 +31,9 @@ from app.core.database import Base        # noqa: E402
 
 # Register all models on Base.metadata by importing the package.
 # Add new model modules to app/models/__init__.py for autodiscovery.
-import app.models.otp      # noqa: F401,E402  (side-effect import)
-import app.models.api_key  # noqa: F401,E402  (side-effect import)
+import app.models.otp        # noqa: F401,E402  (side-effect import)
+import app.models.api_key    # noqa: F401,E402  (side-effect import)
+import app.models.blacklist  # noqa: F401,E402  (side-effect import)
 
 # --- Standard Alembic setup --------------------------------------------------
 config = context.config
