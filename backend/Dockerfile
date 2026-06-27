@@ -36,6 +36,10 @@ COPY --from=builder /install/deps /usr/local
 # Copy application source
 COPY ./app ./app
 
+# Copy Alembic migration config and scripts
+COPY alembic.ini .
+COPY ./alembic ./alembic
+
 # Non-root user (defense-in-depth — never run prod containers as root)
 RUN useradd --create-home --shell /bin/bash appuser && chown -R appuser /app
 USER appuser

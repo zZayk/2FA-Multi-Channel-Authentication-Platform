@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     TUNISIASMS_SENDER_ID: str = Field(default="L2T-2FA")
 
     # -------------------------------------------------------------------------
+    # DLR (delivery receipt) polling — Month 2, Slice 1
+    # -------------------------------------------------------------------------
+    # How often Beat fires the poll task (seconds).
+    DLR_POLL_INTERVAL_SECONDS: int = Field(default=30, ge=5, le=600)
+    # Max rows reconciled per poll tick — bounds DB + provider load per run.
+    DLR_POLL_BATCH_SIZE: int = Field(default=100, ge=1, le=1000)
+    # A row still SENT (no terminal DLR) past this age → declared FAILED so it
+    # never wedges forever. Should exceed realistic carrier DLR latency. Rows
+    # older than this are failed *without* a (pointless) DLR call.
+    DLR_TIMEOUT_SECONDS: int = Field(default=600, ge=60)
+
+    # -------------------------------------------------------------------------
     # Email channel adapter (SMTP)
     # -------------------------------------------------------------------------
     EMAIL_HOST: str = Field(default="localhost")
@@ -90,6 +102,12 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     ABUSE_RULE_MAX_PER_HOUR: int = Field(default=10, ge=1)
     ABUSE_RULE_MAX_PER_DAY: int = Field(default=50, ge=1)
+    # Per-IP hourly cap — higher than per-recipient since one IP (NAT/proxy)
+    # can legitimately serve many users.
+    ABUSE_RULE_IP_MAX_PER_HOUR: int = Field(default=30, ge=1)
+    # Isolation Forest decision threshold — score above this = block.
+    # Inert while ml.anomaly_score is a stub (returns 0.0).
+    ABUSE_ML_SCORE_THRESHOLD: float = Field(default=0.75, ge=0.0, le=1.0)
 
     # -------------------------------------------------------------------------
     # pydantic-settings loader config

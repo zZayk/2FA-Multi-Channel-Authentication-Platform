@@ -37,6 +37,9 @@ services:
   # worker — Celery worker (executes async jobs: send SMS, send Email, DLR poll)
   # ---------------------------------------------------------------------------
   worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     image: 2fa-platform-backend:dev
     command: celery -A app.tasks.celery_app worker --loglevel=INFO
     env_file:
@@ -58,6 +61,9 @@ services:
   #   (duplicate SMS sends, duplicate DLR polls). Always exactly ONE Beat.
   #   Read more: Celery docs — "Periodic Tasks".
   beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     image: 2fa-platform-backend:dev
     command: celery -A app.tasks.celery_app beat --loglevel=INFO
     env_file:

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OTP State Machine · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">🔁 OTP State Machine</h1>
+    <p class="lead">Every OTP row moves through these states. Terminal states (VERIFIED, EXPIRED, FAILED, BLOCKED) can't transition further.</p>
+
+    <div class="mermaid">
+stateDiagram-v2
+    [*] --> PENDING: create_otp
+    PENDING --> SENT: adapter ACCEPTED
+    PENDING --> FAILED: adapter REJECTED
+    PENDING --> BLOCKED: anti-abuse (M2)
+    SENT --> DELIVERED: DLR confirms (M2)
+    SENT --> VERIFIED: correct code in time
+    DELIVERED --> VERIFIED: correct code in time
+    SENT --> EXPIRED: TTL or attempts
+    VERIFIED --> [*]
+    EXPIRED --> [*]
+    FAILED --> [*]
+    BLOCKED --> [*]
+    </div>
+    <div class="diagram-fallback"></div>
+
+    <table>
+      <tr><th>State</th><th>Meaning</th><th>Set by</th></tr>
+      <tr><td><code>pending</code></td><td>Created, queued, not yet sent</td><td>create_otp</td></tr>
+      <tr><td><code>sent</code></td><td>Adapter accepted (HTTP 2xx / SMTP 250)</td><td>dispatch_otp</td></tr>
+      <tr><td><code>delivered</code></td><td>Carrier confirmed receipt</td><td>DLR poll <em>(Month 2)</em></td></tr>
+      <tr><td><code>failed</code></td><td>Adapter rejected / permanent error</td><td>dispatch_otp</td></tr>
+      <tr><td><code>verified</code></td><td>User submitted correct code in time</td><td>verify_otp</td></tr>
+      <tr><td><code>expired</code></td><td>TTL passed or attempts exhausted</td><td>verify_otp</td></tr>
+      <tr><td><code>blocked</code></td><td>Anti-abuse refused to send</td><td>abuse engine <em>(Month 2)</em></td></tr>
+    </table>
+
+    <div class="note"><b>Two states are stubs today:</b> <code>delivered</code> and <code>blocked</code> are defined in the enum but nothing sets them yet — they light up in Month 2 (DLR polling + anti-abuse). Defining them now means no migration churn later.</div>
+
+    <div class="good"><b>Audit-friendly design:</b> we never delete OTP rows. <code>attempt_count</code>, <code>used_at</code>, and status transitions stay on the row so the Month-2 abuse engine can mine patterns (e.g. "5 OTPs to one number in 10s").</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>

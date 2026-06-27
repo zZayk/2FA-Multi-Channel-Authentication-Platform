@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glossary · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">📖 Glossary</h1>
+    <p class="lead">Quick definitions for the jargon scattered through the codebase.</p>
+    <table>
+      <tr><th>Term</th><th>In one line</th></tr>
+      <tr><td><b>OTP</b></td><td>One-Time Password — short code valid once, briefly.</td></tr>
+      <tr><td><b>HMAC</b></td><td>Keyed hash; proves a value without storing it, needs the secret key to forge.</td></tr>
+      <tr><td><b>DLR</b></td><td>Delivery Receipt — carrier's confirmation an SMS arrived (Month 2).</td></tr>
+      <tr><td><b>Broker</b></td><td>The queue (Redis) holding jobs between API and worker.</td></tr>
+      <tr><td><b>Celery worker</b></td><td>Process that runs queued jobs (sending messages).</td></tr>
+      <tr><td><b>Celery Beat</b></td><td>Scheduler that enqueues periodic jobs (cron-like).</td></tr>
+      <tr><td><b>Adapter</b></td><td>Class wrapping one external channel behind a shared interface.</td></tr>
+      <tr><td><b>correlation_id</b></td><td>Trace UUID following one request across services + logs.</td></tr>
+      <tr><td><b>Idempotent</b></td><td>Safe to run twice with the same effect as once (dispatch skips non-pending).</td></tr>
+      <tr><td><b>Lifespan</b></td><td>FastAPI startup/shutdown hook for shared resources.</td></tr>
+      <tr><td><b>Migration</b></td><td>Versioned, reversible schema change (Alembic).</td></tr>
+      <tr><td><b>Drift</b></td><td>When models and migrations disagree — the drift test catches it.</td></tr>
+      <tr><td><b>Dependency override</b></td><td>Swapping a real <code>Depends</code> for a stub in tests.</td></tr>
+      <tr><td><b>Transient error</b></td><td>Temporary failure worth retrying (timeout, 5xx).</td></tr>
+      <tr><td><b>Permanent error</b></td><td>Won't fix itself; don't retry (bad recipient, 401).</td></tr>
+      <tr><td><b>SecretStr</b></td><td>Pydantic type that hides secrets from logs/repr.</td></tr>
+      <tr><td><b>E.164</b></td><td>International phone format: <code>+</code> then up to 15 digits.</td></tr>
+      <tr><td><b>CSPRNG</b></td><td>Cryptographically secure RNG (Python <code>secrets</code>) — unpredictable.</td></tr>
+    </table>
+
+    <div class="note">Want the design rationale behind any choice? It's all in <code>docs/decisions.md</code> — grouped by date and topic, written to feed your internship report.</div>
+
+    <div class="good"><b>Month 1 complete.</b> You can now explain: how an OTP is born, hashed, queued, sent, and verified; why each component exists; and how to test + observe all of it. Next stop: Month 2 — DLR polling and the anti-abuse engine.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>

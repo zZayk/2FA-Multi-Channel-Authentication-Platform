@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Model · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">🗄️ Data Model</h1>
+    <p class="lead">Two tables today. Both store secrets as keyed HMAC — never plaintext.</p>
+
+    <div class="mermaid">
+erDiagram
+    OTPS {
+      uuid id PK
+      string code_hash "HMAC-SHA256 hex 64"
+      enum channel "sms or email"
+      string recipient "phone or email"
+      enum status "pending..blocked"
+      timestamptz created_at
+      timestamptz expires_at
+      timestamptz used_at "null until verified"
+      int attempt_count
+      uuid correlation_id "trace id"
+    }
+    API_KEYS {
+      uuid id PK
+      string name
+      string key_hash "HMAC hex 64 unique"
+      string key_prefix "l2t_xxxx audit"
+      timestamptz created_at
+      timestamptz last_used_at "debounced"
+      timestamptz revoked_at "null means active"
+    }
+    </div>
+    <div class="diagram-fallback"></div>
+
+    <div class="grid">
+      <div class="card"><b>🔑 Why hash, not encrypt?</b><p class="muted">Hash is one-way. We never need the original code back — only to check "does this match?". HMAC + SECRET_KEY means a stolen DB is useless without the app's secret.</p></div>
+      <div class="card"><b>🧵 correlation_id</b><p class="muted">One UUID stamped per auth attempt. Rides through API → worker → adapter → logs so you can trace a single OTP across processes.</p></div>
+    </div>
+
+    <h2>Sample rows (what you'd see in psql)</h2>
+    <p class="tablabel">otps</p>
+    <pre><code>          id           | channel |  recipient    | status  | attempt_count
+-----------------------+---------+---------------+---------+--------------
+ 7c3a1e2b-9f44-...d77   | sms     | +21620000000  | sent    |      0
+ 91a0c4f2-1b88-...e10   | email   | a@example.com | verified|      0
+ 33de77a1-90cc-...4ab   | sms     | +21622222222  | expired |      5</code></pre>
+    <p class="tablabel">api_keys</p>
+    <pre><code>    name     | key_prefix | last_used_at        | revoked_at
+-------------+------------+---------------------+------------
+ dev-local   | l2t_3vK9   | 2026-06-05 12:30:01 |  (null)
+ old-cron    | l2t_7hTz   | 2026-05-01 09:14:22 | 2026-06-01 10:00:00</code></pre>
+
+    <h2>Indexes that matter</h2>
+    <table>
+      <tr><th>Index</th><th>Speeds up</th></tr>
+      <tr><td><code>ix_otp_recipient_status</code></td><td>"latest active OTP for this recipient" on verify</td></tr>
+      <tr><td><code>ix_otps_correlation_id</code></td><td>tracing one request across logs/rows</td></tr>
+      <tr><td><code>ix_api_keys_key_hash</code> (unique)</td><td>O(log n) key lookup on every authed request</td></tr>
+    </table>
+
+    <div class="note">Schema is versioned: <code>0001_init_otp</code> + <code>0002_api_keys</code> in <code>backend/alembic/versions/</code>. A drift test guarantees migrations match the models (see Testing).</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>

@@ -26,7 +26,12 @@ This project has two equally-weighted objectives:
 2. **Checkpoint questions.** End sessions with 1–2 short understanding-check questions (e.g., "How would you add a new channel?").
 3. **Complexity ladder.** Start with `v1 — minimal`. Move to `v2 — production-ready` only when asked, and explain what changed.
 4. **Never just fix — explain the bug.** Always state (a) what the bug is, (b) root cause, (c) how to prevent that class.
-5. **Architecture decisions log.** Append one-liners to `docs/decisions.md` for non-obvious choices: `YYYY-MM-DD | [topic] | [decision] | [reason]`. This feeds the internship report.
+5. **Architecture decisions log.** Append non-obvious choices to `docs/decisions.md`, grouped under a `## YYYY-MM-DD` heading (newest first). Entry shape:
+   ```markdown
+   - **[topic]** Short decision (≤ 80 chars).
+     _Reason:_ Why this choice over the obvious alternative.
+   ```
+   Topics: `repo`, `layout`, `infra`, `api`, `config`, `db`, `model`, `ci`, `tests`, `tasks`. This feeds the internship report.
 
 ## Planned Stack
 
@@ -79,7 +84,34 @@ docker compose up --build  # api:8000 · frontend:3000 · db:5432 · redis:6379
 
 Single endpoint exposed so far: `GET /health` → `{"status":"ok","version":"0.1.0"}`.
 
-Lint, migration, and test runners arrive in later weeks — update this section the moment they land.
+### Tooling (Week 2)
+
+Run from `backend/`:
+
+```bash
+# Lint
+ruff check app tests
+ruff format app tests
+
+# Tests
+pytest -q
+pytest -q tests/test_otp_service.py::test_verify_happy_path   # single test
+
+# Migrations (alembic)
+alembic upgrade head            # apply all migrations
+alembic downgrade -1            # roll back one
+alembic revision --autogenerate -m "add foo column"
+alembic current                 # show DB revision
+```
+
+Inside Docker:
+```bash
+docker compose run --rm api ruff check app tests
+docker compose run --rm api pytest -q
+docker compose run --rm api alembic upgrade head
+```
+
+Commits follow Conventional Commits — see `commitlint.config.js`. CI runs `ruff` + `pytest` + `docker build` + commitlint on PRs.
 
 ## Environment
 

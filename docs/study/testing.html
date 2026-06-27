@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Testing · 2FA Study Guide</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script defer src="assets/nav.js"></script>
+</head>
+<body>
+<div class="layout">
+  <nav id="sidebar" class="side"></nav>
+  <main>
+    <h1 class="title">🧪 Testing</h1>
+    <p class="lead">Four layers of tests. Fast ones run anywhere; heavy ones spin a real Postgres on demand.</p>
+
+    <div class="mermaid">
+flowchart LR
+    U["Unit&#10;hash, code gen"] --> S["Schema + Auth&#10;401, 422"]
+    S --> I["DB Integration&#10;full lifecycle"]
+    I --> E["E2E&#10;request to verify"]
+    E --> D["Drift&#10;migrations == models"]
+    </div>
+    <div class="diagram-fallback"></div>
+
+    <table>
+      <tr><th>Layer</th><th>File</th><th>Docker?</th><th>Proves</th></tr>
+      <tr><td>Unit</td><td><code>test_otp_service.py</code></td><td>No</td><td>code gen, HMAC hash/verify</td></tr>
+      <tr><td>Schema + auth</td><td><code>test_otp_api.py</code></td><td>No</td><td>401 gate, 422 validation</td></tr>
+      <tr><td>DB integration</td><td><code>test_otp_service_db.py</code></td><td>Yes</td><td>full OTP lifecycle in Postgres</td></tr>
+      <tr><td>E2E</td><td><code>test_e2e_otp.py</code></td><td>Yes</td><td>request → verify over HTTP w/ real key</td></tr>
+      <tr><td>Drift</td><td><code>test_alembic_drift.py</code></td><td>Yes</td><td>migrations == models</td></tr>
+    </table>
+
+    <h2>Run them</h2>
+    <pre><code># fast tests — no Docker daemon needed
+docker compose run --rm api pytest -q
+
+# everything, incl. a real Postgres via testcontainers
+docker compose run --rm api pytest -q --run-integration
+
+# one test class
+docker compose run --rm api pytest -q tests/test_otp_service.py::TestHmacRoundtrip
+
+# lint
+docker compose run --rm api ruff check app tests</code></pre>
+
+    <div class="note"><b>Why two modes?</b> CI and quick local loops shouldn't need Docker-in-Docker. Integration tests opt-in with <code>--run-integration</code> so the default run stays fast and green.</div>
+
+    <h2>Hands-on end-to-end (see it actually work)</h2>
+    <p class="tablabel">1 · BOOT</p>
+    <pre><code>cp .env.example .env          # set SECRET_KEY
+docker compose up --build -d
+docker compose run --rm api alembic upgrade head</code></pre>
+
+    <p class="tablabel">2 · MINT AN API KEY (shown once — copy it)</p>
+    <pre><code>docker compose run --rm api python -c "
+import asyncio
+from app.core.database import SessionLocal
+from app.services import api_key_service
+async def main():
+    async with SessionLocal() as s:
+        _, pt = await api_key_service.create_api_key(s, name='dev-local')
+        print('API KEY:', pt)
+asyncio.run(main())"</code></pre>
+
+    <p class="tablabel">3 · REQUEST AN OTP</p>
+    <pre><code>curl -i -X POST http://localhost:8000/otp/request `
+  -H "Content-Type: application/json" `
+  -H "X-API-Key: l2t_PASTE_KEY_HERE" `
+  -d '{\"channel\":\"sms\",\"recipient\":\"+21620000000\"}'</code></pre>
+
+    <p class="tablabel">4 · READ THE CODE FROM WORKER LOGS (no real gateway in dev)</p>
+    <pre><code>docker compose logs worker | Select-String "dispatch"</code></pre>
+
+    <p class="tablabel">5 · VERIFY IT</p>
+    <pre><code>curl -i -X POST http://localhost:8000/otp/verify `
+  -H "Content-Type: application/json" `
+  -H "X-API-Key: l2t_PASTE_KEY_HERE" `
+  -d '{\"recipient\":\"+21620000000\",\"code\":\"418207\"}'</code></pre>
+
+    <div class="warn">The HTTP response never carries the code (by design). In dev with no real gateway the send "fails", but the row + flow are real. Add <b>MailHog</b> (see Observe) to actually see Email codes in a UI.</div>
+
+    <div class="good"><b>The commands use PowerShell syntax</b> (backtick line-continuation, <code>Select-String</code>) since you're on Windows. In Git Bash, swap <code>`</code> for <code>\</code> and <code>Select-String</code> for <code>grep</code>.</div>
+
+    <div class="pagenav" id="pagenav"></div>
+  </main>
+</div>
+</body>
+</html>
